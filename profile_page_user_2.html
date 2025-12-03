@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>プロフィール - ECサイト</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <style>
+        :root {
+            --primary-color: #007bff;
+            --secondary-color: #6c757d;
+            --success-color: #28a745;
+            --danger-color: #dc3545;
+            --warning-color: #ffc107;
+            --info-color: #17a2b8;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f8f9fa;
+        }
+
+        .navbar {
+            background: linear-gradient(135deg, var(--primary-color) 0%, #0056b3 100%);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .navbar-brand {
+            font-weight: bold;
+            font-size: 1.5rem;
+        }
+
+        .nav-link {
+            transition: color 0.3s ease;
+        }
+
+        .nav-link:hover {
+            color: #fff !important;
+        }
+
+        .card {
+            border: none;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary-color) 0%, #0056b3 100%);
+            border: none;
+            transition: transform 0.2s ease;
+        }
+
+        .btn-primary:hover {
+            transform: scale(1.05);
+        }
+
+        .product-card {
+            position: relative;
+            overflow: hidden;
+        }
+
+        .product-image {
+            height: 250px;
+            object-fit: cover;
+            background-color: #e9ecef;
+        }
+
+        .product-price {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--primary-color);
+        }
+
+        .badge-stock {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+        }
+
+        .alert {
+            border: none;
+            border-radius: 8px;
+        }
+
+        .footer {
+            background-color: #343a40;
+            color: #fff;
+            padding: 40px 0;
+            margin-top: 60px;
+        }
+
+        .form-control, .form-select {
+            border-radius: 6px;
+            border: 1px solid #dee2e6;
+        }
+
+        .form-control:focus, .form-select:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+        }
+
+        .cart-badge {
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            background-color: var(--danger-color);
+            color: white;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: bold;
+        }
+
+        .loading {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .loading.active {
+            display: flex;
+        }
+
+        .spinner-border {
+            width: 3rem;
+            height: 3rem;
+        }
+
+        @media (max-width: 768px) {
+            .product-image {
+                height: 200px;
+            }
+
+            .navbar-brand {
+                font-size: 1.2rem;
+            }
+        }
+    </style>
+    
+</head>
+<body>
+    <!-- ナビゲーションバー -->
+    <nav class="navbar navbar-expand-lg navbar-dark sticky-top">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-shop"></i> ECサイト
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/">ホーム</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/products">商品</a>
+                    </li>
+                    
+                        <li class="nav-item">
+                            <a class="nav-link" href="/orders">注文履歴</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/profile">プロフィール</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/logout">ログアウト</a>
+                        </li>
+                    
+                    <li class="nav-item">
+                        <a class="nav-link position-relative" href="/cart">
+                            <i class="bi bi-cart3"></i> カート
+                            
+                                <span class="cart-badge" id="cart-count">0</span>
+                            
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <!-- アラートメッセージ -->
+    <div class="container mt-4">
+        
+            
+        
+    </div>
+
+    <!-- メインコンテンツ -->
+    <main>
+        
+<div class="container mt-5 mb-5">
+    <div class="row">
+        <div class="col-md-3 mb-4">
+            <div class="card">
+                <div class="card-body text-center">
+                    <div style="width: 80px; height: 80px; background: linear-gradient(135deg, var(--primary-color) 0%, #0056b3 100%); border-radius: 50%; margin: 0 auto 15px; display: flex; align-items: center; justify-content: center;">
+                        <i class="bi bi-person" style="font-size: 2rem; color: white;"></i>
+                    </div>
+                    <h5>None None</h5>
+                    <p class="text-muted">bbbbbb@</p>
+                    <hr>
+                    <a href="/profile/edit" class="btn btn-primary btn-sm w-100 mb-2">
+                        <i class="bi bi-pencil"></i> プロフィール編集
+                    </a>
+                    <a href="/change-password" class="btn btn-outline-primary btn-sm w-100">
+                        <i class="bi bi-key"></i> パスワード変更
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-9">
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">基本情報</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <strong>ユーザー名:</strong><br>
+                            bbbbbb
+                        </div>
+                        <div class="col-md-6">
+                            <strong>メールアドレス:</strong><br>
+                            bbbbbb@
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <strong>名前:</strong><br>
+                            -
+                        </div>
+                        <div class="col-md-6">
+                            <strong>姓:</strong><br>
+                            -
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <strong>電話番号:</strong><br>
+                            -
+                        </div>
+                        <div class="col-md-6">
+                            <strong>登録日:</strong><br>
+                            2025年12月02日
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">配送先情報</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <strong>住所:</strong><br>
+                            -
+                        </div>
+                        <div class="col-md-6">
+                            <strong>市区町村:</strong><br>
+                            -
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <strong>郵便番号:</strong><br>
+                            -
+                        </div>
+                        <div class="col-md-6">
+                            <strong>国:</strong><br>
+                            -
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+    </main>
+
+    <!-- フッター -->
+    <footer class="footer">
+        <div class="container">
+            <div class="row">
+                <div class="col-md-4 mb-4">
+                    <h5>ECサイトについて</h5>
+                    <p>高品質な商品を提供するオンラインストアです。</p>
+                </div>
+                <div class="col-md-4 mb-4">
+                    <h5>カテゴリー</h5>
+                    <ul class="list-unstyled">
+                        <li><a href="/products?category=%E9%9B%BB%E5%AD%90%E6%A9%9F%E5%99%A8" class="text-white-50">電子機器</a></li>
+                        <li><a href="/products?category=%E3%82%AA%E3%83%BC%E3%83%87%E3%82%A3%E3%82%AA" class="text-white-50">オーディオ</a></li>
+                        <li><a href="/products?category=%E3%82%A2%E3%82%AF%E3%82%BB%E3%82%B5%E3%83%AA%E3%83%BC" class="text-white-50">アクセサリー</a></li>
+                    </ul>
+                </div>
+                <div class="col-md-4 mb-4">
+                    <h5>お問い合わせ</h5>
+                    <p class="text-white-50">
+                        Email: info@ecommerce.com<br>
+                        Phone: 0120-XXX-XXXX
+                    </p>
+                </div>
+            </div>
+            <hr class="bg-white-50">
+            <div class="text-center text-white-50">
+                <p>&copy; 2024 ECサイト. All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- ローディング表示 -->
+    <div class="loading" id="loading">
+        <div class="spinner-border text-light" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // カート数を更新
+        function updateCartCount() {
+            
+            fetch('/cart')
+                .then(response => response.text())
+                .then(html => {
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    const count = doc.querySelectorAll('tr[data-item-id]').length;
+                    const badge = document.getElementById('cart-count');
+                    if (badge) {
+                        badge.textContent = count;
+                    }
+                });
+            
+        }
+
+        // ページロード時にカート数を更新
+        document.addEventListener('DOMContentLoaded', updateCartCount);
+
+        // ローディング表示の制御
+        function showLoading() {
+            document.getElementById('loading').classList.add('active');
+        }
+
+        function hideLoading() {
+            document.getElementById('loading').classList.remove('active');
+        }
+    </script>
+    
+</body>
+</html>
